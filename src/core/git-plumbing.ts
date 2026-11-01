@@ -95,3 +95,82 @@ export const updateRef = async (repo: RepoContext, ref: string, commit: string):
   const result = await runGit(["update-ref", ref, commit], { cwd: repo.toplevel })
   gitText(result, "git update-ref failed")
 }
+
+export const readTree = async (
+  repo: RepoContext,
+  treeIsh: string,
+  indexFile?: string,
+): Promise<void> => {
+  const result = await runGit(["read-tree", treeIsh], {
+    cwd: repo.toplevel,
+    env: indexFile === undefined ? undefined : { GIT_INDEX_FILE: indexFile },
+  })
+  gitText(result, `git read-tree ${treeIsh} failed`)
+}
+
+export const addAllToIndex = async (
+  repo: RepoContext,
+  indexFile: string,
+): Promise<void> => {
+  const result = await runGit(["add", "-A"], {
+    cwd: repo.toplevel,
+    env: { GIT_INDEX_FILE: indexFile },
+  })
+  gitText(result, "git add -A failed")
+}
+
+export const resolveRef = async (
+  repo: RepoContext,
+  ref: string,
+): Promise<string | null> => {
+  const result = await runGit(["rev-parse", "--verify", "--quiet", ref], {
+    cwd: repo.toplevel,
+  })
+  if (result.code !== 0) return null
+  const sha = firstLine(result.stdout)
+  return sha.length > 0 ? sha : null
+}
+
+export const getCommitTree = async (
+  repo: RepoContext,
+  commitIsh: string,
+): Promise<string | null> => {
+  const result = await runGit(["rev-parse", "--verify", "--quiet", `${commitIsh}^{tree}`], {
+    cwd: repo.toplevel,
+  })
+  if (result.code !== 0) return null
+  const sha = firstLine(result.stdout)
+  return sha.length > 0 ? sha : null
+}
+
+export const listRefs = async (
+  repo: RepoContext,
+  pattern: string,
+): Promise<Array<{ ref: string; sha: string }>> => {
+  const result = await runGit(
+    ["for-each-ref", "--sort=-creatordate", "--format=%(refname) %(objectname)", pattern],
+    { cwd: repo.toplevel },
+  )
+  if (result.code !== 0) return []
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [ref = "", sha = ""] = line.split(" ")
+      return { ref, sha }
+    })
+    .filter((entry) => entry.ref.length > 0 && entry.sha.length > 0)
+}
+
+export const getCommitBody = async (
+  repo: RepoContext,
+  commitSha: string,
+): Promise<string> => {
+  const result = await runGit(["log", "-1", "--format=%B", commitSha], {
+    cwd: repo.toplevel,
+  })
+  if (result.code !== 0) return ""
+  return result.stdout
+}
+
