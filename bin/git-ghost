@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+import { existsSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)))
+const entry = join(root, "dist", "cli.js")
+
+if (!existsSync(entry)) {
+  process.stderr.write("ghost · run npm run build before git ghost\n")
+  process.exit(1)
+}
+
+await import(pathToFileURL(entry).href)

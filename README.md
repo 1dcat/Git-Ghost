@@ -71,7 +71,7 @@ $ git ghost ask src/auth/session.ts:88 "why refresh before the expiry check?"
 3. **Author diff.** `git show --format=fuller --unified=8 <sha> -- <filename>` supplies the commit. Ghost keeps the hunk that covers the blamed line, plus one neighboring hunk on each side, and trims the excerpt to `GHOST_MAX_DIFF_BYTES`.
 4. **Local window.** `GHOST_BLAME_CONTEXT_LINES` (default 12) lines above and below the target travel with the prompt, so the model can see the check, the refresh, and the return together.
 5. **One hop of ancestry.** When porcelain includes `previous`, Ghost fetches that single earlier location. The hop explains a moved or copied line. The walk stops there, so a question about one line cannot drag in the whole history of the file.
-6. **Persona injection.** The provider is `openai` or `anthropic`, selected by `GHOST_LLM_PROVIDER`. The system prompt is the author persona. The user prompt is the hunk, the window, and the question.
+6. **Persona injection.** `GHOST_LLM_PROVIDER` is `openai`, `anthropic`, or `local`. `local` calls an OpenAI-compatible server, default `http://127.0.0.1:11434/v1` (Ollama). There is no setup menu. The system prompt is the author persona. The user prompt is the hunk, the window, and the question.
 
 ### How the persona behaves
 
@@ -201,7 +201,7 @@ $ git ghost gui
 | Conversation | Pick a file and a line. The panel calls `ask()` and renders the persona with the SHA |
 | Backup rail | `refs/ghost/backup/*`, including `--undo` |
 
-The GUI reads the same refs and functions as the CLI. If a ref exists, the timeline can show it. If `git ghost ask` can answer, the panel can ask. Stack for the skeleton: a Node HTTP server in `src/gui/server.ts`, React views in `src/gui/web/main.tsx`, Tailwind utility classes on the markup. The Vite config arrives with the first rendered timeline.
+The GUI reads the same refs and functions as the CLI. If a ref exists, the timeline can show it. If `git ghost ask` can answer, the panel can ask. The server is `src/server`. The dashboard is `web/`, styled with Tailwind utility classes, and `web/vite.config.ts` builds it to `dist/web`.
 
 ```text
 GET  /api/shadows          → listShadows()
@@ -342,69 +342,57 @@ sequenceDiagram
 ## Layout and scope split
 
 ```
-# Scope A — core CLI, `git ghost ask`, architecture, GUI skeleton
-# Scope B — `git ghost test`, `git ghost rewind`, shadow-ref plumbing
+# Scope A — CLI, ask, local or hosted model, dashboard
+# Scope B — git ghost test, git ghost rewind, shadow refs
 
-.
-├── .env.example
-├── .gitignore
-├── LICENSE
-├── README.md
-├── package-lock.json
+git-ghost/
 ├── package.json
 ├── tsconfig.json
-├── bin
-│   └── git-ghost.ts                         # A  `git ghost` subcommand entry
-├── src
-│   ├── foundation                           # A  shared runtime
-│   │   ├── config.ts                        # A  env + ref namespace
-│   │   ├── errors.ts                        # A  exit codes
-│   │   ├── git-exec.ts                      # A  the only Git spawner
-│   │   ├── logger.ts                        # A  `ghost ·` stdout / stderr
-│   │   └── repo.ts                          # A  toplevel, git dir, HEAD, branch
-│   ├── cli
-│   │   ├── context.ts                       # A  argv + RepoContext + config
-│   │   ├── program.ts                       # A  dispatch: ask, test, rewind, gui
-│   │   └── commands
-│   │       ├── ask.ts                       # A  `git ghost ask` surface
-│   │       ├── gui.ts                       # A  `git ghost gui` surface
-│   │       ├── rewind.ts                    # B  `git ghost rewind` surface
-│   │       └── test.ts                      # B  `git ghost test` surface
-│   ├── ask                                  # A  Ghost Archaeology
-│   │   ├── target.ts                        # A  parse <file>:<line>
-│   │   ├── blame.ts                         # A  porcelain blame → chunk
-│   │   ├── diff.ts                          # A  author diff extraction
-│   │   ├── persona.ts                       # A  author persona
-│   │   ├── prompt.ts                        # A  persona + hunk + question
-│   │   └── llm.ts                           # A  provider injection
-│   ├── gui                                  # A  visual dashboard skeleton
-│   │   ├── server.ts                        # A  loopback HTTP server
-│   │   ├── routes.ts                        # A  timeline + ask routes
-│   │   └── web
-│   │       ├── index.html                   # A  dashboard shell
-│   │       └── main.tsx                     # A  timeline and conversation UI
-│   └── shadow                                # B  shadow commits and rewind
-│       ├── test-runner.ts                   # B  run the command, gate on exit 0
-│       ├── snapshot.ts                      # B  pass → invisible snapshot
-│       ├── rewind.ts                        # B  restore a shadow tree
-│       ├── safety.ts                        # B  backup ref before any worktree edit
-│       └── plumbing
-│           ├── write-tree.ts                # B  temp index + `git write-tree`
-│           ├── commit-tree.ts               # B  `git commit-tree`
-│           └── refs.ts                      # B  `refs/ghost/shadow/*`
-└── tests
-    ├── ask                                  # A  blame fixtures, prompt assembly
-    │   └── .gitkeep
-    └── shadow                               # B  temp repos, ref updates, rewind
-        └── .gitkeep
+├── README.md
+├── bin/
+│   └── git-ghost
+├── src/
+    ├── cli.ts
+    ├── commands/
+    │   ├── ask.ts
+    │   ├── test.ts
+    │   ├── rewind.ts
+    │   └── gui.ts
+    ├── core/
+    │   ├── git-plumbing.ts
+    │   ├── shadow-manager.ts
+    │   ├── blame-parser.ts
+    │   ├── diff-analyzer.ts
+    │   ├── config.ts
+    │   └── errors.ts
+    ├── ai/
+    │   ├── client.ts
+    │   ├── prompts.ts
+    │   └── persona-builder.ts
+    ├── server/
+    │   ├── index.ts
+    │   └── routes.ts
+    └── utils/
+        ├── terminal.ts
+        └── exec.ts
+└── web/
+├── index.html
+├── vite.config.ts
+└── src/
+    ├── main.tsx
+    ├── App.tsx
+    └── components/
+        ├── Timeline.tsx
+        ├── DiffViewer.tsx
+        └── GhostChat.tsx
 ```
 
 | Owner | Paths | Builds |
 | --- | --- | --- |
-| **Scope A** | `bin/`, `src/foundation/`, `src/cli/program.ts`, `src/cli/context.ts`, `src/cli/commands/ask.ts`, `src/cli/commands/gui.ts`, `src/ask/`, `src/gui/`, `tests/ask/` | The `git-ghost` subcommand, config, logging, repo discovery, the only `git` spawner, the ask engine, the dashboard skeleton |
-| **Scope B** | `src/cli/commands/test.ts`, `src/cli/commands/rewind.ts`, `src/shadow/`, `tests/shadow/` | Test gating, temporary-index snapshots, `commit-tree` messages, `refs/ghost/*`, backup, rewind |
+| **Scope A** | `bin/git-ghost`, `src/cli.ts`, `src/commands/ask.ts`, `src/commands/gui.ts`, `src/ai/`, `src/server/`, `web/`, `src/core/blame-parser.ts`, `src/core/diff-analyzer.ts`, `src/core/config.ts`, `src/core/errors.ts`, `src/utils/` | The subcommand, ask, the model client, and the dashboard |
+| **Scope B** | `src/commands/test.ts`, `src/commands/rewind.ts`, `src/core/shadow-manager.ts`, `src/core/git-plumbing.ts` | Test gating, shadow refs, rewind, and the Git plumbing wrappers |
 
-`program.ts` (Scope A) is the dispatcher. It calls Scope B through `runGhostTest`, `rewind`, and `listShadows`. Shadow modules call `runGit` from `src/foundation/git-exec.ts` for every Git invocation, including `write-tree`, `commit-tree`, and `update-ref`.
+`src/cli.ts` registers the four commands. Shadow code calls `runGit` from `src/utils/exec.ts` for every Git invocation, including `write-tree`, `commit-tree`, and `update-ref`.
 
 Git finds the subcommand by name. An executable called `git-ghost` on `PATH` makes `git ghost …` work. `npm link` puts that name on `PATH`.
 
@@ -444,21 +432,21 @@ export type GhostAnswer = {
 
 | Export | Module | Owner | Contract |
 | --- | --- | --- | --- |
-| `openRepo(cwd)` | `foundation/repo.ts` | A | `RepoContext`. `head` is null when `HEAD` is unborn. `branch` is null when detached |
-| `runGit(args, options)` | `foundation/git-exec.ts` | A | Spawns `git` with optional `cwd` and `GIT_INDEX_FILE`. Returns stdout, stderr, and code |
-| `loadConfig()` | `foundation/config.ts` | A | Reads the environment. `ask` refuses to run when the selected provider has no key or model |
-| `ask(repo, target, question?)` | `src/ask/` | A | Returns `GhostAnswer`, or a typed error for uncommitted lines, binary files, and provider failures |
-| `runGhostTest(repo, command)` | `shadow/test-runner.ts` | B | Exit 0 returns a `Snapshot` and updates `latest`. Any other status writes no shadow ref and passes the status through |
-| `rewind(repo, selector?)` | `shadow/rewind.ts` | B | Writes a backup ref, then `read-tree --reset -u` of the selected shadow. `HEAD` stays put |
-| `listShadows(repo)` | `shadow/refs.ts` | B | `for-each-ref` under the configured namespace |
+| `openRepo(cwd)` | `core/git-plumbing.ts` | A | `RepoContext`. `head` is null when `HEAD` is unborn. `branch` is null when detached |
+| `runGit(args, options)` | `utils/exec.ts` | A | Spawns `git` with optional `cwd` and `GIT_INDEX_FILE`. Returns stdout, stderr, and code |
+| `loadConfig()` | `core/config.ts` | A | Reads the environment. `ask` refuses to run when the selected provider is missing its model, or a hosted provider is missing its key |
+| `ask(repo, target, question?)` | `src/commands/ask.ts` | A | Returns `GhostAnswer`, or a typed error for uncommitted lines, binary files, and provider failures |
+| `runGhostTest(repo, command)` | `core/shadow-manager.ts` | B | Exit 0 returns a `Snapshot` and updates `latest`. Any other status writes no shadow ref and passes the status through |
+| `rewind(repo, selector?)` | `core/shadow-manager.ts` | B | Writes a backup ref, then `read-tree --reset -u` of the selected shadow. `HEAD` stays put |
+| `listShadows(repo)` | `core/shadow-manager.ts` | B | `for-each-ref` under the configured namespace |
 
-Exit codes from `src/foundation/errors.ts`:
+Exit codes from `src/core/errors.ts`:
 
 | Code | When |
 | --- | --- |
 | `0` | Ask, snapshot, rewind, list, or GUI startup succeeded |
 | *command status* | `git ghost test` ran a failing command. No shadow ref was written |
-| `2` | Usage: unknown command, bad `<file>:<line>`, missing provider key or model |
+| `2` | Usage: unknown command, bad `<file>:<line>`, missing hosted key, or missing local model name |
 | `1` | Blame, the model, or Git plumbing failed |
 | `3` | Rewind stopped before the worktree changed, or was rolled back to the backup it just wrote |
 
@@ -616,7 +604,9 @@ set +a
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `GHOST_LLM_PROVIDER` | for `ask` | `openai` or `anthropic` |
+| `GHOST_LLM_PROVIDER` | for `ask` | `openai`, `anthropic`, or `local` |
+| `GHOST_LOCAL_BASE_URL` | no | Default `http://127.0.0.1:11434/v1` when the provider is `local` |
+| `GHOST_LOCAL_MODEL` | provider `local` | Model name already available on that server |
 | `OPENAI_API_KEY` | provider `openai` | OpenAI credential |
 | `OPENAI_MODEL` | provider `openai` | Model id for that account |
 | `ANTHROPIC_API_KEY` | provider `anthropic` | Anthropic credential |
@@ -632,11 +622,12 @@ set +a
 Git dispatches `git ghost` to an executable named `git-ghost` on `PATH`. From this repository:
 
 ```bash
+npm run build
 npm link
 git ghost --help
 ```
 
-Run `npm link` again after the Scope A entrypoint build is in place. Check the scaffold with:
+`npm link` publishes `dist/cli.js`. Check the project with:
 
 ```bash
 npm run typecheck

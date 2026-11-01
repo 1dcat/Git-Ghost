@@ -12,14 +12,17 @@
     "url": "git+https://github.com/1dcat/Git-Ghost.git"
   },
   "bin": {
-    "git-ghost": "./bin/git-ghost.js"
+    "git-ghost": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc --noEmit false --outDir dist --rootDir .",
+    "build": "tsc --noEmit false && chmod +x dist/cli.js",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "commander": "^15.0.0"
   }
 }
