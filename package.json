@@ -11,7 +11,11 @@
     "type": "git",
     "url": "git+https://github.com/1dcat/Git-Ghost.git"
   },
+  "bin": {
+    "git-ghost": "./bin/git-ghost.js"
+  },
   "scripts": {
+    "build": "tsc --noEmit false --outDir dist --rootDir .",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

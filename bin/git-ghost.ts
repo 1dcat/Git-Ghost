@@ -1,9 +1,19 @@
 /**
- * Scope A — CLI entry
- *
- * Git invokes `git ghost` by resolving an executable named `git-ghost`
- * on PATH. This module is that entry. It hands argv to the dispatcher
- * in src/cli/program.ts.
- *
- * Scaffold only. Implementation is intentionally absent.
+ * Scope A — Git finds this process as the `ghost` subcommand.
  */
+
+import { ExitCode, GhostError } from "../src/foundation/errors.js"
+import { error } from "../src/foundation/logger.js"
+import { run } from "../src/cli/program.js"
+
+const main = async (): Promise<void> => {
+  try {
+    await run(process.argv.slice(2))
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "git ghost failed"
+    error(message)
+    process.exit(caught instanceof GhostError ? caught.exitCode : ExitCode.failure)
+  }
+}
+
+await main()
