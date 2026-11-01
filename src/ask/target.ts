@@ -13,9 +13,9 @@ export type AskTarget = {
   line: number
 }
 
-const escapesRoot = (root: string, candidate: string): boolean => {
+const isInside = (root: string, candidate: string): boolean => {
   const rel = relative(root, candidate)
-  return rel.length === 0 || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
 }
 
 export const splitLines = (text: string): string[] => {
@@ -48,8 +48,11 @@ export const parseTarget = async (raw: string, repo: RepoContext): Promise<AskTa
     throw new GhostUsageError("usage: git ghost ask <file>:<line> [question]")
   }
 
-  const absolute = resolve(repo.toplevel, rawFile)
-  if (escapesRoot(repo.toplevel, absolute)) {
+  // Git resolves blame paths from the current directory, not the repo root.
+  const absolute = isAbsolute(rawFile)
+    ? resolve(rawFile)
+    : resolve(process.cwd(), rawFile)
+  if (!isInside(repo.toplevel, absolute)) {
     throw new GhostUsageError("file must stay inside the repository")
   }
 
@@ -62,7 +65,9 @@ export const parseTarget = async (raw: string, repo: RepoContext): Promise<AskTa
       ? String(caught.code)
       : ""
     if (code === "ENOENT") {
-      throw new GhostUsageError(`${file} does not exist in the worktree`)
+      throw new GhostUsageError(
+        `${rawFile} does not exist in ${repo.toplevel}. Paths are relative to the current directory.`,
+      )
     }
     throw new GhostUsageError(`${file} could not be read`)
   }
@@ -73,7 +78,7 @@ export const parseTarget = async (raw: string, repo: RepoContext): Promise<AskTa
 
   const root = await realpath(repo.toplevel)
   const canonical = await realpath(absolute)
-  if (escapesRoot(root, canonical)) {
+  if (!isInside(root, canonical)) {
     throw new GhostUsageError("file must stay inside the repository")
   }
 
