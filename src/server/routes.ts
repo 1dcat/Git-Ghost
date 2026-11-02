@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url"
 import { ask } from "../commands/ask.js"
 import { ExitCode, GhostError } from "../core/errors.js"
 import { openRepo } from "../core/git-plumbing.js"
-import { listShadows, rewind, runGhostTest, shadowFiles } from "../core/shadow-manager.js"
+import { listShadows, rewind, runGhostTest, shadowFiles, shadowPatch } from "../core/shadow-manager.js"
 
 export type RouteResult = {
   status: number
@@ -56,7 +56,8 @@ export const dispatch = async (
     const ref = query.get("ref") ?? ""
     if (ref.length === 0) return json(400, { error: "ref is required" })
     const files = await shadowFiles(repo, ref)
-    return json(200, { ref, files })
+    const patch = await shadowPatch(repo, ref)
+    return json(200, { ref, files, patch })
   }
 
   if (method === "POST" && path === "/api/test") {
@@ -65,10 +66,7 @@ export const dispatch = async (
     const command = typeof payload.command === "string" && payload.command.trim().length > 0
       ? payload.command
       : undefined
-    const previousExit = process.exitCode
-    const snapshot = await runGhostTest(repo, command, { stdio: "pipe" })
-    const code = snapshot ? 0 : process.exitCode ?? 1
-    process.exitCode = previousExit
+    const { snapshot, code } = await runGhostTest(repo, command, { stdio: "pipe" })
     if (!snapshot) return json(200, { ok: false, code })
     return json(200, { ok: true, code, snapshot })
   }

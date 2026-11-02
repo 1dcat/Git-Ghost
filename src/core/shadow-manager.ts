@@ -13,6 +13,7 @@ import {
   checkoutTree,
   commitTree,
   getCommitBody,
+  diffPatch,
   getCommitDate,
   getCommitParent,
   getCommitTree,
@@ -126,42 +127,27 @@ export const runGhostTest = async (
   repo: RepoContext,
   command?: string,
   options?: RunGhostTestOptions,
-): Promise<Snapshot | null> => {
+): Promise<{ snapshot: Snapshot | null, code: number }> => {
   const testCmd = await resolveTestCommand(repo, command)
 
-  // Step B: Create Temporary Index
+  log(`running ${testCmd}`)
+  const { code } = await executeCommand(
+    testCmd,
+    repo.toplevel,
+    options?.stdio ?? "inherit",
+  )
+  if (code !== 0) {
+    process.stdout.write("\n")
+    log("no snapshot written")
+    log("refs/ghost/snapshots/latest unchanged")
+    return { snapshot: null, code }
+  }
+
   const tempIndex = join(repo.gitDir, `ghost-index-${randomUUID()}`)
-
   try {
-    // Step C: Load Current HEAD State
-    if (repo.head !== null) {
-      await readTree(repo, repo.head, tempIndex)
-    }
-
-    // Step D: git add -A Using Temporary Index
+    if (repo.head !== null) await readTree(repo, repo.head, tempIndex)
     await addAllToIndex(repo, tempIndex)
-
-    // Step E: Create Tree
     const treeSha = await writeTree(repo, tempIndex)
-
-    // Step F: Run Tests
-    log(`running ${testCmd}`)
-    const { code } = await executeCommand(
-      testCmd,
-      repo.toplevel,
-      options?.stdio ?? "inherit",
-    )
-
-    if (code !== 0) {
-      // Step F -> Failed -> Step I: Delete Temporary Index (handled in finally)
-      process.stdout.write("\n")
-      log("no snapshot written")
-      log("refs/ghost/snapshots/latest unchanged")
-      process.exitCode = code
-      return null
-    }
-
-    // Step F -> Passed -> Step G: Create Internal Commit
     const prevSnapshot =
       (await resolveRef(repo, "refs/ghost/snapshots/latest")) ??
       (await resolveRef(repo, "refs/ghost/shadow/latest"))
@@ -201,14 +187,17 @@ export const runGhostTest = async (
     )
 
     return {
-      ref: snapshotRef,
-      commit: commitSha,
-      tree: treeSha,
-      parent: parent ?? null,
-      branch: repo.branch,
-      head: repo.head,
-      command: testCmd,
-      createdAt: now.toISOString(),
+      snapshot: {
+        ref: snapshotRef,
+        commit: commitSha,
+        tree: treeSha,
+        parent: parent ?? null,
+        branch: repo.branch,
+        head: repo.head,
+        command: testCmd,
+        createdAt: now.toISOString(),
+      },
+      code: 0,
     }
   } finally {
     // Step I & J: Delete Temporary Index
@@ -423,4 +412,12 @@ export const shadowFiles = async (
   const tree = await getCommitTree(repo, sha)
   if (tree === null) return []
   return nameStatus(repo, repo.head, tree)
+}
+
+export const shadowPatch = async (repo: RepoContext, ref: string): Promise<string> => {
+  const sha = ref.startsWith("refs/") ? await resolveRef(repo, ref) : ref
+  if (sha === null || sha.length === 0) throw new GhostUsageError(`${ref} does not exist`)
+  const tree = await getCommitTree(repo, sha)
+  if (tree === null) return ""
+  return diffPatch(repo, repo.head, tree)
 }

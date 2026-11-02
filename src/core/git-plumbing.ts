@@ -165,13 +165,29 @@ export const listRefs = async (
 
 export const checkoutTree = async (repo: RepoContext, treeIsh: string): Promise<void> => {
   const result = await runGit(
-    ["restore", "--source", treeIsh, "--worktree", "--staged", "."],
+    ["read-tree", "--reset", "-u", treeIsh],
     { cwd: repo.toplevel },
   )
   if (result.code !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || "git restore failed"
+    const detail = result.stderr.trim() || result.stdout.trim() || "git read-tree failed"
     throw new GhostFailureError(detail)
   }
+}
+
+export const diffPatch = async (
+  repo: RepoContext,
+  from: string | null,
+  to: string,
+): Promise<string> => {
+  const args = from
+    ? ["diff", "--no-color", from, to]
+    : ["diff-tree", "--no-color", "--root", "-r", "-p", to]
+  const result = await runGit(args, { cwd: repo.toplevel })
+  if (result.code !== 0) return ""
+  const patch = result.stdout
+  const max = 80_000
+  if (Buffer.byteLength(patch) <= max) return patch
+  return `${patch.slice(0, max)}\n…`
 }
 
 export const getCommitParent = async (

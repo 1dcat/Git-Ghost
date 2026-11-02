@@ -28,6 +28,7 @@
         <h2 id="detail-title" class="text-sm font-medium text-zinc-300">Select a shadow commit</h2>
         <p id="detail-meta" class="mt-2 text-sm text-zinc-400"></p>
         <ul id="files" class="mt-4 space-y-1 text-sm"></ul>
+        <pre id="patch" class="mt-4 max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs leading-5 text-zinc-200"></pre>
         <button id="rewind" type="button" class="mt-4 hidden w-fit rounded-md bg-violet-600 px-3 py-2 text-sm font-medium text-white">Rewind to this shadow</button>
         <p id="status" class="mt-4 text-sm text-zinc-400" role="status"></p>
         <details class="mt-6 border-t border-zinc-800 pt-4">
@@ -48,6 +49,7 @@
       const emptyEl = document.querySelector("#empty")
       const statusEl = document.querySelector("#status")
       const filesEl = document.querySelector("#files")
+      const patchEl = document.querySelector("#patch")
       const titleEl = document.querySelector("#detail-title")
       const metaEl = document.querySelector("#detail-meta")
       const rewindButton = document.querySelector("#rewind")
@@ -107,10 +109,11 @@
           return
         }
         renderFiles(data.files || [])
+        patchEl.textContent = data.patch || ""
       }
 
       const renderSnapshots = (next) => {
-        items = next
+        items = [...next].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
         snapshotsEl.replaceChildren()
         emptyEl.hidden = next.length > 0
         for (const item of next) {
@@ -141,8 +144,12 @@
         renderSnapshots(data.shadows || [])
         if (selected) {
           const fresh = items.find((item) => item.ref === selected.ref)
-          if (fresh) await showShadow(fresh)
+          if (fresh) {
+            await showShadow(fresh)
+            return
+          }
         }
+        if (items.length > 0) await showShadow(items[0])
       }
 
       const handleRewind = async (selector) => {
