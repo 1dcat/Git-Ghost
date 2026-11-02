@@ -7,7 +7,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { ask } from "../commands/ask.js"
-import { GhostError } from "../core/errors.js"
+import { ExitCode, GhostError } from "../core/errors.js"
 import { openRepo } from "../core/git-plumbing.js"
 import { listShadows, rewind } from "../core/shadow-manager.js"
 
@@ -53,7 +53,11 @@ export const dispatch = async (method: string, path: string, body: string): Prom
     try {
       return json(200, { snapshot: await rewind(repo, selector) })
     } catch (caught) {
-      const status = caught instanceof GhostError && caught.exitCode === 2 ? 501 : 500
+      const status = caught instanceof GhostError && caught.exitCode === ExitCode.usage
+        ? 400
+        : caught instanceof GhostError && caught.exitCode === ExitCode.rewindAborted
+          ? 409
+          : 500
       const message = caught instanceof Error ? caught.message : "rewind failed"
       return json(status, { error: message })
     }

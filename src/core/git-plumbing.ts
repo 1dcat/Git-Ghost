@@ -163,6 +163,29 @@ export const listRefs = async (
     .filter((entry) => entry.ref.length > 0 && entry.sha.length > 0)
 }
 
+export const checkoutTree = async (repo: RepoContext, treeIsh: string): Promise<void> => {
+  const result = await runGit(
+    ["restore", "--source", treeIsh, "--worktree", "--staged", "."],
+    { cwd: repo.toplevel },
+  )
+  if (result.code !== 0) {
+    const detail = result.stderr.trim() || result.stdout.trim() || "git restore failed"
+    throw new GhostFailureError(detail)
+  }
+}
+
+export const getCommitParent = async (
+  repo: RepoContext,
+  commit: string,
+): Promise<string | null> => {
+  const result = await runGit(["rev-parse", "--verify", "--quiet", `${commit}^`], {
+    cwd: repo.toplevel,
+  })
+  if (result.code !== 0) return null
+  const sha = firstLine(result.stdout)
+  return sha.length > 0 ? sha : null
+}
+
 export const getCommitBody = async (
   repo: RepoContext,
   commitSha: string,

@@ -39,9 +39,15 @@ program
 program
   .command("rewind")
   .description("restore a shadow snapshot")
-  .argument("[selector]", "latest, a hop count, a ref, --list, or --undo")
-  .action(async (selector?: string) => {
-    await runRewind(selector === undefined ? [] : [selector])
+  .argument("[selector]", "latest, a hop count, or a ref")
+  .option("--list", "list snapshots without changing the worktree")
+  .option("--undo", "return to the newest backup")
+  .action(async (selector: string | undefined, options: { list?: boolean, undo?: boolean }) => {
+    const args: string[] = []
+    if (options.list) args.push("--list")
+    if (options.undo) args.push("--undo")
+    if (selector !== undefined) args.push(selector)
+    await runRewind(args)
   })
 
 program

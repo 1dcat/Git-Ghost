@@ -7,11 +7,13 @@ import { randomUUID } from "node:crypto"
 import { readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 
-import { GhostUsageError } from "./errors.js"
+import { GhostRewindError, GhostUsageError } from "./errors.js"
 import {
   addAllToIndex,
+  checkoutTree,
   commitTree,
   getCommitBody,
+  getCommitParent,
   getCommitTree,
   listRefs,
   readTree,
@@ -214,11 +216,165 @@ export const runGhostTest = async (
   }
 }
 
+const stampId = (date: Date, tree: string): string => {
+  const timestamp = date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "")
+  return `${timestamp}-${tree.slice(0, 7)}`
+}
+
+const captureWorktree = async (repo: RepoContext): Promise<string> => {
+  const tempIndex = join(repo.gitDir, `ghost-index-${randomUUID()}`)
+  try {
+    if (repo.head !== null) await readTree(repo, repo.head, tempIndex)
+    await addAllToIndex(repo, tempIndex)
+    return await writeTree(repo, tempIndex)
+  } finally {
+    try {
+      await rm(tempIndex, { force: true })
+    } catch {
+      // The backup ref is only written after the tree exists.
+    }
+  }
+}
+
+const writeBackup = async (repo: RepoContext): Promise<{ ref: string, tree: string }> => {
+  const tree = await captureWorktree(repo)
+  const now = new Date()
+  const ref = `refs/ghost/backup/${stampId(now, tree)}`
+  const message = [
+    "ghost: backup",
+    "",
+    `Branch: ${repo.branch ?? "detached"}`,
+    `Head: ${repo.head ?? "unborn"}`,
+    "Command: rewind",
+    "Exit: 0",
+  ].join("\n")
+  const commit = await commitTree(repo, tree, message, repo.head ?? undefined)
+  await updateRef(repo, ref, commit)
+  await updateRef(repo, "refs/ghost/backup/latest", commit)
+  return { ref, tree }
+}
+
+const latestSnapshot = async (repo: RepoContext): Promise<string | null> =>
+  (await resolveRef(repo, "refs/ghost/snapshots/latest"))
+  ?? (await resolveRef(repo, "refs/ghost/shadow/latest"))
+
+const isGhostCommit = async (repo: RepoContext, sha: string): Promise<boolean> => {
+  const body = await getCommitBody(repo, sha)
+  return body.startsWith("ghost:")
+}
+
+const walkBack = async (repo: RepoContext, start: string, hops: number): Promise<string> => {
+  let current = start
+  for (let step = 0; step < hops; step += 1) {
+    const parent = await getCommitParent(repo, current)
+    if (parent === null || !(await isGhostCommit(repo, parent))) {
+      const count = step + 1
+      throw new GhostUsageError(`the shadow chain only has ${count} snapshot${count === 1 ? "" : "s"}`)
+    }
+    current = parent
+  }
+  return current
+}
+
+const refForCommit = async (repo: RepoContext, sha: string): Promise<string> => {
+  const snapshots = await listShadows(repo)
+  const snapshot = snapshots.find((entry) => entry.commit === sha)
+  if (snapshot) return snapshot.ref
+  const backups = await listRefs(repo, "refs/ghost/backup/")
+  const backup = backups.find((entry) => entry.sha === sha && !entry.ref.endsWith("/latest"))
+  return backup?.ref ?? sha.slice(0, 12)
+}
+
+const resolveRewindTarget = async (
+  repo: RepoContext,
+  selector?: string,
+): Promise<{ kind: "list" } | { kind: "tree", commit: string, label: "latest" | "older" | "exact" | "backup" }> => {
+  if (selector === "--list") return { kind: "list" }
+
+  if (selector === "--undo") {
+    const backups = (await listRefs(repo, "refs/ghost/backup/"))
+      .filter((entry) => !entry.ref.endsWith("/latest"))
+    const newest = backups[0]
+    if (!newest) throw new GhostUsageError("no rewind backup yet")
+    return { kind: "tree", commit: newest.sha, label: "backup" }
+  }
+
+  if (selector !== undefined && /^\d+$/.test(selector)) {
+    const place = Number(selector)
+    if (place < 1) throw new GhostUsageError("snapshot number starts at 1")
+    const latest = await latestSnapshot(repo)
+    if (latest === null) {
+      throw new GhostUsageError("no shadow snapshots yet. Run git ghost test when the suite passes.")
+    }
+    const commit = await walkBack(repo, latest, place - 1)
+    return { kind: "tree", commit, label: place === 1 ? "latest" : "older" }
+  }
+
+  if (selector !== undefined && selector.startsWith("refs/")) {
+    const commit = await resolveRef(repo, selector)
+    if (commit === null) throw new GhostUsageError(`${selector} does not exist`)
+    return { kind: "tree", commit, label: "exact" }
+  }
+
+  if (selector !== undefined && selector !== "latest") {
+    throw new GhostUsageError("usage: git ghost rewind [latest | <n> | <ref> | --list | --undo]")
+  }
+
+  const latest = await latestSnapshot(repo)
+  if (latest === null) {
+    throw new GhostUsageError("no shadow snapshots yet. Run git ghost test when the suite passes.")
+  }
+  return { kind: "tree", commit: latest, label: "latest" }
+}
+
+export type RewindResult =
+  | { kind: "list", snapshots: Snapshot[] }
+  | {
+    kind: "restored"
+    backupRef: string
+    ref: string
+    label: "latest" | "older" | "exact" | "backup"
+    head: string | null
+    branch: string | null
+  }
+
 export const rewind = async (
-  _repo: RepoContext,
-  _selector?: string,
-): Promise<ShadowSnapshot> => {
-  throw new GhostUsageError("git ghost rewind is not implemented yet")
+  repo: RepoContext,
+  selector?: string,
+): Promise<RewindResult> => {
+  const target = await resolveRewindTarget(repo, selector)
+  if (target.kind === "list") {
+    return { kind: "list", snapshots: await listShadows(repo) }
+  }
+
+  const tree = await getCommitTree(repo, target.commit)
+  if (tree === null) throw new GhostUsageError("that snapshot has no tree")
+  const restoredRef = await refForCommit(repo, target.commit)
+  const backup = await writeBackup(repo)
+
+  try {
+    await checkoutTree(repo, tree)
+  } catch (caught) {
+    try {
+      await checkoutTree(repo, backup.tree)
+    } catch (rollback) {
+      throw new GhostRewindError(
+        `rewind failed and the backup restore failed. Backup ref is ${backup.ref}.`,
+        { cause: rollback },
+      )
+    }
+    const reason = caught instanceof Error ? caught.message : "rewind failed"
+    throw new GhostRewindError(`${reason} The worktree was restored from ${backup.ref}.`)
+  }
+
+  return {
+    kind: "restored",
+    backupRef: backup.ref,
+    ref: restoredRef,
+    label: target.label,
+    head: repo.head,
+    branch: repo.branch,
+  }
 }
 
 export const listShadows = async (repo: RepoContext): Promise<Snapshot[]> => {
