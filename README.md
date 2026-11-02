@@ -601,6 +601,14 @@ npm link
 git ghost -h
 ```
 
+If `npm link` fails with `EACCES: permission denied`, your npm global prefix is root-owned (common with default macOS Node installs). Either run `sudo npm link`, or configure a user-level prefix:
+
+```bash
+mkdir -p ~/.npm-global && npm config set prefix ~/.npm-global
+export PATH="$HOME/.npm-global/bin:$PATH"
+npm link
+```
+
 Git intercepts `git ghost --help` and looks for a manual page. Use `-h`.
 
 ### 2. Set up the local model

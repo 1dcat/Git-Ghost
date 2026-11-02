@@ -12,7 +12,7 @@
     "url": "git+https://github.com/1dcat/Git-Ghost.git"
   },
   "bin": {
-    "git-ghost": "./dist/cli.js"
+    "git-ghost": "./bin/git-ghost"
   },
   "scripts": {
     "build": "tsc --noEmit false && chmod +x dist/cli.js",
