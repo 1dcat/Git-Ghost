@@ -13,9 +13,11 @@ import {
   checkoutTree,
   commitTree,
   getCommitBody,
+  getCommitDate,
   getCommitParent,
   getCommitTree,
   listRefs,
+  nameStatus,
   readTree,
   resolveRef,
   updateRef,
@@ -73,10 +75,12 @@ const executeCommand = (
   return new Promise((resolve) => {
     const child = spawn(cmd, {
       cwd,
-      stdio,
       shell: true,
       env: process.env,
+      stdio: stdio === "pipe" ? ["ignore", "pipe", "pipe"] : "inherit",
     })
+    child.stdout?.resume()
+    child.stderr?.resume()
 
     child.on("error", () => {
       resolve({ code: 1 })
@@ -378,14 +382,19 @@ export const rewind = async (
 }
 
 export const listShadows = async (repo: RepoContext): Promise<Snapshot[]> => {
-  const entries = await listRefs(repo, "refs/ghost/snapshots/")
-  const filtered = entries.filter((e) => !e.ref.endsWith("/latest"))
+  const entries = [
+    ...(await listRefs(repo, "refs/ghost/snapshots/")),
+    ...(await listRefs(repo, "refs/ghost/shadow/")),
+  ]
+  const seen = new Set<string>()
   const snapshots: Snapshot[] = []
 
-  for (const { ref, sha } of filtered) {
+  for (const { ref, sha } of entries) {
+    if (ref.endsWith("/latest") || seen.has(sha)) continue
+    seen.add(sha)
     const body = await getCommitBody(repo, sha)
+    if (body.startsWith("ghost: backup")) continue
     const tree = (await getCommitTree(repo, sha)) ?? ""
-
     const branchMatch = /^Branch:\s*(.+)$/m.exec(body)
     const headMatch = /^Head:\s*(.+)$/m.exec(body)
     const cmdMatch = /^Command:\s*(.+)$/m.exec(body)
@@ -398,9 +407,20 @@ export const listShadows = async (repo: RepoContext): Promise<Snapshot[]> => {
       branch: branchMatch ? branchMatch[1].trim() : null,
       head: headMatch ? headMatch[1].trim() : null,
       command: cmdMatch ? cmdMatch[1].trim() : "test",
-      createdAt: ref.split("/").pop()?.split("-")[0] ?? "",
+      createdAt: await getCommitDate(repo, sha),
     })
   }
 
   return snapshots
+}
+
+export const shadowFiles = async (
+  repo: RepoContext,
+  ref: string,
+): Promise<Array<{ status: string, path: string }>> => {
+  const sha = ref.startsWith("refs/") ? await resolveRef(repo, ref) : ref
+  if (sha === null || sha.length === 0) throw new GhostUsageError(`${ref} does not exist`)
+  const tree = await getCommitTree(repo, sha)
+  if (tree === null) return []
+  return nameStatus(repo, repo.head, tree)
 }

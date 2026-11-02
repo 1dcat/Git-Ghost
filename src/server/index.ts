@@ -20,7 +20,12 @@ export const startServer = (config: GhostConfig): Promise<void> =>
     const server = createServer(async (request, response) => {
       try {
         const url = new URL(request.url ?? "/", `http://${config.guiHost}:${config.guiPort}`)
-        const result = await dispatch(request.method ?? "GET", url.pathname, await readBody(request))
+        const result = await dispatch(
+          request.method ?? "GET",
+          url.pathname,
+          await readBody(request),
+          url.searchParams,
+        )
         response.writeHead(result.status, { "content-type": result.contentType })
         response.end(result.body)
       } catch (caught) {

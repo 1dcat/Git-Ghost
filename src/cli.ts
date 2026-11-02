@@ -8,8 +8,10 @@ import { Command, CommanderError } from "commander"
 import { runAsk } from "./commands/ask.js"
 import { runGui } from "./commands/gui.js"
 import { runRewind } from "./commands/rewind.js"
+import { runSetup } from "./commands/setup.js"
 import { runTest } from "./commands/test.js"
 import { ExitCode, GhostError } from "./core/errors.js"
+import { loadProjectEnv } from "./utils/env.js"
 import { error } from "./utils/terminal.js"
 
 const program = new Command()
@@ -51,6 +53,13 @@ program
   })
 
 program
+  .command("setup")
+  .description("write a local model config and check Ollama")
+  .action(async () => {
+    await runSetup()
+  })
+
+program
   .command("gui")
   .description("open the local timeline")
   .action(async () => {
@@ -59,10 +68,15 @@ program
 
 const main = async (): Promise<void> => {
   try {
+    await loadProjectEnv()
     await program.parseAsync(process.argv)
   } catch (caught) {
     if (caught instanceof CommanderError) {
-      if (caught.exitCode === 0) return
+      const showedHelp = caught.exitCode === 0
+        || caught.code === "commander.helpDisplayed"
+        || caught.code === "commander.version"
+        || caught.message === "(outputHelp)"
+      if (showedHelp) return
       error(caught.message)
       process.exit(ExitCode.usage)
     }

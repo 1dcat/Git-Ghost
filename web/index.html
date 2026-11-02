@@ -6,8 +6,231 @@
     <title>Git-Ghost</title>
     <script src="https://cdn.tailwindcss.com"></script>
   </head>
-  <body class="min-h-screen bg-zinc-950 text-zinc-100">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+  <body class="flex h-screen flex-col bg-zinc-950 text-zinc-100">
+    <header class="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+      <div>
+        <p class="text-xs uppercase tracking-wide text-zinc-500">Git-Ghost</p>
+        <h1 class="text-xl font-semibold">Shadow commits</h1>
+      </div>
+      <button id="undo" type="button" class="rounded-md border border-zinc-700 px-3 py-2 text-sm">Undo last rewind</button>
+    </header>
+    <main class="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[340px_1fr]">
+      <section class="flex min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900 p-4" aria-label="Shadow commits">
+        <form id="test-form" class="flex gap-2">
+          <label class="sr-only" for="command">Test command</label>
+          <input id="command" name="command" class="min-w-0 flex-1 rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="npm test" />
+          <button id="test-button" type="submit" class="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white">Run</button>
+        </form>
+        <ul id="snapshots" class="mt-4 min-h-0 flex-1 space-y-2 overflow-auto"></ul>
+        <p id="empty" class="mt-4 text-sm text-zinc-400">No shadow commits yet. Run a command that passes.</p>
+      </section>
+      <section class="flex min-h-0 flex-col overflow-auto rounded-xl border border-zinc-800 bg-zinc-900 p-4" aria-label="Selected shadow commit">
+        <h2 id="detail-title" class="text-sm font-medium text-zinc-300">Select a shadow commit</h2>
+        <p id="detail-meta" class="mt-2 text-sm text-zinc-400"></p>
+        <ul id="files" class="mt-4 space-y-1 text-sm"></ul>
+        <button id="rewind" type="button" class="mt-4 hidden w-fit rounded-md bg-violet-600 px-3 py-2 text-sm font-medium text-white">Rewind to this shadow</button>
+        <p id="status" class="mt-4 text-sm text-zinc-400" role="status"></p>
+        <details class="mt-6 border-t border-zinc-800 pt-4">
+          <summary class="cursor-pointer text-sm text-zinc-300">Ask the author of a line</summary>
+          <form id="ask-form" class="mt-4 space-y-3">
+            <label class="block text-sm text-zinc-400" for="target">File and line</label>
+            <input id="target" name="target" required class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="src/utils/terminal.ts:8" />
+            <label class="block text-sm text-zinc-400" for="question">Question</label>
+            <input id="question" name="question" class="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm" placeholder="why is this here?" />
+            <button id="ask-button" type="submit" class="rounded-md border border-zinc-700 px-3 py-2 text-sm">Ask</button>
+          </form>
+          <article id="answer" class="mt-4 whitespace-pre-wrap text-sm leading-6"></article>
+        </details>
+      </section>
+    </main>
+    <script>
+      const snapshotsEl = document.querySelector("#snapshots")
+      const emptyEl = document.querySelector("#empty")
+      const statusEl = document.querySelector("#status")
+      const filesEl = document.querySelector("#files")
+      const titleEl = document.querySelector("#detail-title")
+      const metaEl = document.querySelector("#detail-meta")
+      const rewindButton = document.querySelector("#rewind")
+      const testButton = document.querySelector("#test-button")
+      const askButton = document.querySelector("#ask-button")
+      let selected = null
+      let items = []
+
+      const setStatus = (text) => {
+        statusEl.textContent = text
+      }
+
+      const shortSha = (sha) => (sha || "").slice(0, 7)
+
+      const whenLabel = (value) => {
+        const date = new Date(value)
+        if (Number.isNaN(date.getTime())) return value || ""
+        return date.toLocaleString()
+      }
+
+      const statusLabel = (status) => {
+        if (status === "A") return "added"
+        if (status === "D") return "deleted"
+        if (status === "M") return "modified"
+        return status
+      }
+
+      const renderFiles = (files) => {
+        filesEl.replaceChildren()
+        if (files.length === 0) {
+          const none = document.createElement("li")
+          none.className = "text-zinc-500"
+          none.textContent = "This shadow matches the current branch tip."
+          filesEl.append(none)
+          return
+        }
+        for (const file of files) {
+          const row = document.createElement("li")
+          row.className = "font-mono text-xs text-zinc-200"
+          row.textContent = `${statusLabel(file.status)}  ${file.path}`
+          filesEl.append(row)
+        }
+      }
+
+      const showShadow = async (item) => {
+        selected = item
+        titleEl.textContent = item.command || "shadow commit"
+        metaEl.textContent = `${whenLabel(item.createdAt)} · ${shortSha(item.commit)} · branch ${item.branch || "detached"}`
+        rewindButton.classList.remove("hidden")
+        for (const button of snapshotsEl.querySelectorAll("button[data-ref]")) {
+          button.setAttribute("aria-current", button.dataset.ref === item.ref ? "true" : "false")
+        }
+        const response = await fetch(`/api/shadow?ref=${encodeURIComponent(item.ref)}`)
+        const data = await response.json()
+        if (!response.ok) {
+          setStatus(data.error || "Could not read that shadow commit")
+          return
+        }
+        renderFiles(data.files || [])
+      }
+
+      const renderSnapshots = (next) => {
+        items = next
+        snapshotsEl.replaceChildren()
+        emptyEl.hidden = next.length > 0
+        for (const item of next) {
+          const row = document.createElement("li")
+          const button = document.createElement("button")
+          button.type = "button"
+          button.dataset.ref = item.ref
+          button.className = "w-full rounded-lg border border-zinc-800 p-3 text-left aria-[current=true]:border-violet-500"
+          button.setAttribute("aria-current", selected && selected.ref === item.ref ? "true" : "false")
+          const title = document.createElement("p")
+          title.className = "text-sm text-zinc-100"
+          title.textContent = item.command || "test"
+          const when = document.createElement("p")
+          when.className = "mt-1 text-xs text-zinc-500"
+          when.textContent = `${whenLabel(item.createdAt)} · ${shortSha(item.commit)}`
+          button.append(title, when)
+          button.addEventListener("click", () => {
+            showShadow(item).catch(() => setStatus("Could not open that shadow commit."))
+          })
+          row.append(button)
+          snapshotsEl.append(row)
+        }
+      }
+
+      const loadSnapshots = async () => {
+        const response = await fetch("/api/shadows")
+        const data = await response.json()
+        renderSnapshots(data.shadows || [])
+        if (selected) {
+          const fresh = items.find((item) => item.ref === selected.ref)
+          if (fresh) await showShadow(fresh)
+        }
+      }
+
+      const handleRewind = async (selector) => {
+        setStatus("Restoring the shadow commit. The branch tip stays put.")
+        const response = await fetch("/api/rewind", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ selector }),
+        })
+        const data = await response.json()
+        if (!response.ok) {
+          setStatus(data.error || "Rewind failed")
+          return
+        }
+        setStatus("Worktree restored from the shadow commit.")
+        await loadSnapshots()
+      }
+
+      const handleTest = async (event) => {
+        event.preventDefault()
+        const command = document.querySelector("#command").value.trim()
+        testButton.disabled = true
+        setStatus(command.length > 0 ? `Running ${command}` : "Running the test script")
+        try {
+          const response = await fetch("/api/test", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ command }),
+          })
+          const data = await response.json()
+          if (!response.ok || data.ok === false) {
+            setStatus(`No shadow commit written. The command exited ${data.code ?? response.status}.`)
+            return
+          }
+          setStatus("Shadow commit saved. The branch history is unchanged.")
+          await loadSnapshots()
+          const created = items.find((item) => item.commit === data.snapshot.commit)
+          if (created) await showShadow(created)
+        } catch (error) {
+          setStatus("The app could not reach the local server.")
+        } finally {
+          testButton.disabled = false
+        }
+      }
+
+      const handleAsk = async (event) => {
+        event.preventDefault()
+        const target = document.querySelector("#target").value.trim()
+        const question = document.querySelector("#question").value.trim()
+        askButton.disabled = true
+        document.querySelector("#answer").textContent = ""
+        setStatus("Asking the local model. The first reply can take a minute.")
+        try {
+          const response = await fetch("/api/ask", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ target, question }),
+          })
+          const data = await response.json()
+          if (!response.ok) {
+            setStatus(data.error || "Ask failed")
+            return
+          }
+          document.querySelector("#answer").textContent = data.answer || ""
+          setStatus(`${data.authorName} · ${data.authoredAt}`)
+        } catch (error) {
+          setStatus("The app could not reach the local server.")
+        } finally {
+          askButton.disabled = false
+        }
+      }
+
+      document.querySelector("#test-form").addEventListener("submit", (event) => {
+        handleTest(event).catch(() => setStatus("The test command failed."))
+      })
+      rewindButton.addEventListener("click", () => {
+        if (!selected) return
+        const ok = window.confirm("Restore this shadow commit into the worktree? The branch tip stays put.")
+        if (!ok) return
+        handleRewind(selected.ref).catch(() => setStatus("Rewind failed."))
+      })
+      document.querySelector("#undo").addEventListener("click", () => {
+        handleRewind("--undo").catch(() => setStatus("Nothing to undo yet."))
+      })
+      document.querySelector("#ask-form").addEventListener("submit", (event) => {
+        handleAsk(event).catch(() => setStatus("Ask failed."))
+      })
+      loadSnapshots().catch(() => setStatus("Could not load shadow commits."))
+    </script>
   </body>
 </html>

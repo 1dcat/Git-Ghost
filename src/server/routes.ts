@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url"
 import { ask } from "../commands/ask.js"
 import { ExitCode, GhostError } from "../core/errors.js"
 import { openRepo } from "../core/git-plumbing.js"
-import { listShadows, rewind } from "../core/shadow-manager.js"
+import { listShadows, rewind, runGhostTest, shadowFiles } from "../core/shadow-manager.js"
 
 export type RouteResult = {
   status: number
@@ -32,7 +32,12 @@ const readJson = (body: string): Record<string, unknown> => {
   return parsed as Record<string, unknown>
 }
 
-export const dispatch = async (method: string, path: string, body: string): Promise<RouteResult> => {
+export const dispatch = async (
+  method: string,
+  path: string,
+  body: string,
+  query: URLSearchParams = new URLSearchParams(),
+): Promise<RouteResult> => {
   if (method === "GET" && (path === "/" || path === "/index.html")) {
     return {
       status: 200,
@@ -44,6 +49,28 @@ export const dispatch = async (method: string, path: string, body: string): Prom
   if (method === "GET" && path === "/api/shadows") {
     const repo = await openRepo()
     return json(200, { shadows: await listShadows(repo) })
+  }
+
+  if (method === "GET" && path === "/api/shadow") {
+    const repo = await openRepo()
+    const ref = query.get("ref") ?? ""
+    if (ref.length === 0) return json(400, { error: "ref is required" })
+    const files = await shadowFiles(repo, ref)
+    return json(200, { ref, files })
+  }
+
+  if (method === "POST" && path === "/api/test") {
+    const repo = await openRepo()
+    const payload = readJson(body)
+    const command = typeof payload.command === "string" && payload.command.trim().length > 0
+      ? payload.command
+      : undefined
+    const previousExit = process.exitCode
+    const snapshot = await runGhostTest(repo, command, { stdio: "pipe" })
+    const code = snapshot ? 0 : process.exitCode ?? 1
+    process.exitCode = previousExit
+    if (!snapshot) return json(200, { ok: false, code })
+    return json(200, { ok: true, code, snapshot })
   }
 
   if (method === "POST" && path === "/api/rewind") {

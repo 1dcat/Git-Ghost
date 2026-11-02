@@ -186,6 +186,35 @@ export const getCommitParent = async (
   return sha.length > 0 ? sha : null
 }
 
+export const nameStatus = async (
+  repo: RepoContext,
+  from: string | null,
+  to: string,
+): Promise<Array<{ status: string, path: string }>> => {
+  const args = from
+    ? ["diff", "--name-status", from, to]
+    : ["diff-tree", "--name-status", "--root", "-r", to]
+  const result = await runGit(args, { cwd: repo.toplevel })
+  if (result.code !== 0) return []
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const [status = "", ...rest] = line.split("\t")
+      return { status: status.slice(0, 1), path: rest[rest.length - 1] ?? "" }
+    })
+    .filter((file) => file.path.length > 0)
+}
+
+export const getCommitDate = async (repo: RepoContext, commitSha: string): Promise<string> => {
+  const result = await runGit(["log", "-1", "--format=%cI", commitSha], {
+    cwd: repo.toplevel,
+  })
+  if (result.code !== 0) return ""
+  return result.stdout.trim()
+}
+
 export const getCommitBody = async (
   repo: RepoContext,
   commitSha: string,

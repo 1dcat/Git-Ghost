@@ -579,26 +579,69 @@ $ git ghost --help
 - Node.js 20 or newer
 - Git 2.30 or newer
 - A Git identity (`user.name` and `user.email`), required by `git commit-tree`
-- An API key for OpenAI or Anthropic, required by `git ghost ask`
+- For `git ghost ask` only: a local model via [Ollama](https://ollama.com), or an OpenAI / Anthropic key
 
-### Install
+`git ghost test` and `git ghost rewind` do not call a model.
+
+## Setup
+
+### 1. Install Ghost
 
 ```bash
 git clone https://github.com/1dcat/Git-Ghost.git
 cd Git-Ghost
 npm install
-cp .env.example .env
+npm run build
+npm link
 ```
 
-Edit `.env`, then export the variables in your shell (or load the file however you already load secrets):
+`npm link` puts `git-ghost` on your `PATH`. Git finds that name and runs `git ghost`. Check it with:
 
 ```bash
-set -a
-source .env
-set +a
+git ghost -h
 ```
 
-`.env` is gitignored. `.env.example` is the contract.
+Git intercepts `git ghost --help` and looks for a manual page. Use `-h`.
+
+### 2. Set up the local model
+
+From the Git repository you want to work in:
+
+```bash
+git ghost setup
+```
+
+That checks Ollama, picks a model you already have (a coder model when one is installed), and writes `.env` in the repo root. There is no menu. Ghost reads that file the next time you run a command.
+
+If Ollama is not running, start it with `ollama serve` and run `git ghost setup` again.
+
+### 3. Ask
+
+Inside a Git repository, ask about a line that already has a commit:
+
+```bash
+git ghost ask src/utils/terminal.ts:8 "why is this line here?"
+```
+
+The first answer can take a minute while the model loads.
+
+### 4. Hosted models, if you have a key
+
+Set `GHOST_LLM_PROVIDER` to `openai` or `anthropic` and fill in that provider's key and model in `.env`. Leave the other provider blank.
+
+### 5. Remember a passing test, then go back to it
+
+These commands do not use a model:
+
+```bash
+git ghost test "npm test"
+git ghost rewind --list
+git ghost rewind
+git ghost rewind --undo
+git ghost gui
+```
+
+`git ghost gui` opens a small local window. It lists passing snapshots, rewinds to one, and asks the author of a line.
 
 ### Environment
 
@@ -616,31 +659,6 @@ set +a
 | `GHOST_MAX_DIFF_BYTES` | no | Default `24000` |
 | `GHOST_GUI_HOST` | no | Default `127.0.0.1` |
 | `GHOST_GUI_PORT` | no | Default `4737` |
-
-### Link the subcommand
-
-Git dispatches `git ghost` to an executable named `git-ghost` on `PATH`. From this repository:
-
-```bash
-npm run build
-npm link
-git ghost --help
-```
-
-`npm link` publishes `dist/cli.js`. Check the project with:
-
-```bash
-npm run typecheck
-```
-
-### First session, once the engines are in
-
-```bash
-git ghost test "npm test"
-git ghost ask src/auth/session.ts:88 "why is this check first?"
-git ghost gui
-git ghost rewind
-```
 
 ## Roadmap
 
